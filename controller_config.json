@@ -1,0 +1,98 @@
+{
+  "A": {
+    "action_type": "鼠标左键",
+    "mouse_x": "",
+    "mouse_y": "",
+    "keyboard_key": ""
+  },
+  "B": {
+    "action_type": "鼠标右键",
+    "mouse_x": "",
+    "mouse_y": "",
+    "keyboard_key": ""
+  },
+  "X": {
+    "action_type": "键盘按键",
+    "mouse_x": "",
+    "mouse_y": "",
+    "keyboard_key": "space"
+  },
+  "Y": {
+    "action_type": "键盘按键",
+    "mouse_x": "",
+    "mouse_y": "",
+    "keyboard_key": "enter"
+  },
+  "LB": {
+    "action_type": "键盘按键",
+    "mouse_x": "",
+    "mouse_y": "",
+    "keyboard_key": "shift"
+  },
+  "RB": {
+    "action_type": "键盘按键",
+    "mouse_x": "",
+    "mouse_y": "",
+    "keyboard_key": "ctrl"
+  },
+  "LT": {
+    "action_type": "无动作",
+    "mouse_x": "",
+    "mouse_y": "",
+    "keyboard_key": ""
+  },
+  "RT": {
+    "action_type": "无动作",
+    "mouse_x": "",
+    "mouse_y": "",
+    "keyboard_key": ""
+  },
+  "Back": {
+    "action_type": "键盘按键",
+    "mouse_x": "",
+    "mouse_y": "",
+    "keyboard_key": "esc"
+  },
+  "Start": {
+    "action_type": "键盘按键",
+    "mouse_x": "",
+    "mouse_y": "",
+    "keyboard_key": "tab"
+  },
+  "LS": {
+    "action_type": "无动作",
+    "mouse_x": "",
+    "mouse_y": "",
+    "keyboard_key": ""
+  },
+  "RS": {
+    "action_type": "无动作",
+    "mouse_x": "",
+    "mouse_y": "",
+    "keyboard_key": ""
+  },
+  "Up": {
+    "action_type": "键盘按键",
+    "mouse_x": "",
+    "mouse_y": "",
+    "keyboard_key": "up"
+  },
+  "Down": {
+    "action_type": "键盘按键",
+    "mouse_x": "",
+    "mouse_y": "",
+    "keyboard_key": "down"
+  },
+  "Left": {
+    "action_type": "键盘按键",
+    "mouse_x": "",
+    "mouse_y": "",
+    "keyboard_key": "left"
+  },
+  "Right": {
+    "action_type": "键盘按键",
+    "mouse_x": "",
+    "mouse_y": "",
+    "keyboard_key": "right"
+  }
+}
