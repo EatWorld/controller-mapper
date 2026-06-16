@@ -7,7 +7,9 @@ import json
 import os
 import time
 import threading
-from typing import Dict, Any
+from typing import Dict, Any, Optional
+
+__version__ = "1.1.0"
 
 # 优化PyAutoGUI的性能（保留用于其他功能）
 pyautogui.MINIMUM_DURATION = 0
@@ -401,45 +403,97 @@ class ConfigManager:
 
 class ControllerHandler:
     """手柄处理器 - 管理手柄连接和输入检测"""
-    
+
+    # 轴布局预设：根据总轴数自动选择最匹配的布局
+    # 格式: (left_x, left_y, lt, right_x, right_y, rt)
+    AXIS_LAYOUTS = {
+        6: (0, 1, 2, 3, 4, 5),       # 标准Xbox布局（SDL/XInput）
+        5: (0, 1, None, 2, 3, 4),    # 无独立LT轴的布局
+        4: (0, 1, None, 2, 3, None), # 只有摇杆轴
+    }
+
     def __init__(self):
         self.joystick = None
         self.is_connected = False
         self.button_states = {}
-        
+        self._axis_layout = None  # 检测到的轴布局
+        self._trigger_baseline = {}  # 扳机键静止基准值
+
     def initialize(self) -> bool:
         """初始化手柄"""
         try:
             pygame.init()
             pygame.joystick.init()
-            
+
             if pygame.joystick.get_count() == 0:
                 return False
-            
+
             self.joystick = pygame.joystick.Joystick(0)
             self.joystick.init()
             self.is_connected = True
-            
+
+            # 自动检测轴布局
+            self._detect_axis_layout()
+
             print(f"手柄已连接: {self.joystick.get_name()}")
             return True
         except Exception as e:
             print(f"手柄初始化失败: {e}")
             return False
-    
+
+    def _detect_axis_layout(self):
+        """自动检测手柄轴布局"""
+        if not self.joystick:
+            return
+
+        num_axes = self.joystick.get_numaxes()
+        name = self.joystick.get_name().lower()
+
+        # 先按轴数匹配预设
+        if num_axes in self.AXIS_LAYOUTS:
+            layout = self.AXIS_LAYOUTS[num_axes]
+        else:
+            # 轴数不在预设中，用通用方案：前两个是左摇杆，后面的按位置推断
+            if num_axes >= 6:
+                layout = (0, 1, 2, 3, 4, 5)
+            elif num_axes >= 4:
+                layout = (0, 1, None, 2, 3, None)
+            else:
+                layout = (0, 1, None, None, None, None)
+
+        self._axis_layout = {
+            "left_x": layout[0],
+            "left_y": layout[1],
+            "lt": layout[2],
+            "right_x": layout[3],
+            "right_y": layout[4],
+            "rt": layout[5],
+        }
+
+        # 采样静止状态基准值（用于扳机键零点校准）
+        pygame.event.pump()
+        self._trigger_baseline = {}
+        for key in ("lt", "rt"):
+            idx = self._axis_layout.get(key)
+            if idx is not None and idx < num_axes:
+                self._trigger_baseline[key] = self.joystick.get_axis(idx)
+
+        print(f"轴布局检测: 共{num_axes}轴, 布局={self._axis_layout}")
+        if self._trigger_baseline:
+            print(f"扳机基准值: {self._trigger_baseline}")
+
     def get_button_states(self) -> Dict[str, bool]:
         """获取当前按键状态"""
         if not self.is_connected or not self.joystick:
             return {}
-        
+
         try:
             pygame.event.pump()
-            
-            # 检查摇杆是否仍然有效
+
             if not self.joystick.get_init():
                 self.is_connected = False
                 return {}
-            
-            # 获取按键状态 - 确保返回布尔值
+
             states = {
                 "A": bool(self.joystick.get_button(0)),
                 "B": bool(self.joystick.get_button(1)),
@@ -448,100 +502,71 @@ class ControllerHandler:
                 "LB": bool(self.joystick.get_button(4)),
                 "RB": bool(self.joystick.get_button(5)),
             }
-            
-            # 处理扳机键 - 使用更安全的方式
+
+            # 扳机键检测（使用自动检测的轴布局）
             try:
-                # Xbox手柄的LT和RT通常在轴2和5，但也可能在轴4和5
                 num_axes = self.joystick.get_numaxes()
-                
-                # 调试：输出所有轴的值
-                axis_values = []
-                for i in range(num_axes):
-                    axis_val = self.joystick.get_axis(i)
-                    if abs(axis_val) > 0.05:  # 只显示有变化的轴
-                        axis_values.append(f"轴{i}: {axis_val:.3f}")
-                if axis_values:
-                    print(f"轴值变化: {', '.join(axis_values)}")
-                
-                # LT检测 - Xbox手柄LT通常在轴4，范围从-1(未按)到1(完全按下)
-                lt_detected = False
-                if num_axes >= 5:
-                    lt_value = self.joystick.get_axis(4)
-                    # 将-1到1的范围转换为0到1，然后检查是否超过阈值
-                    lt_normalized = (lt_value + 1) / 2
-                    if lt_normalized > 0.1:
-                        states["LT"] = True
-                        lt_detected = True
-                        print(f"LT检测到(轴4): 原值={lt_value:.3f}, 标准化={lt_normalized:.3f}")
-                
-                # 备用检测轴2
-                if not lt_detected and num_axes >= 3:
-                    lt_value = self.joystick.get_axis(2)
-                    if lt_value > 0.1:
-                        states["LT"] = True
-                        lt_detected = True
-                        print(f"LT检测到(轴2): {lt_value:.3f}")
-                
-                if not lt_detected:
-                    states["LT"] = False
-                
-                # RT检测 - Xbox手柄RT通常在轴5，范围从-1(未按)到1(完全按下)
-                rt_detected = False
-                if num_axes >= 6:
-                    rt_value = self.joystick.get_axis(5)
-                    # 将-1到1的范围转换为0到1，然后检查是否超过阈值
-                    rt_normalized = (rt_value + 1) / 2
-                    if rt_normalized > 0.1:
-                        states["RT"] = True
-                        rt_detected = True
-                        print(f"RT检测到(轴5): 原值={rt_value:.3f}, 标准化={rt_normalized:.3f}")
-                
-                # 备用检测其他轴
-                if not rt_detected and num_axes >= 4:
-                    rt_value = self.joystick.get_axis(3)
-                    if rt_value > 0.1:
-                        states["RT"] = True
-                        rt_detected = True
-                        print(f"RT检测到(轴3): {rt_value:.3f}")
-                
-                if not rt_detected:
-                    states["RT"] = False
-                    
+                for trigger_name in ("LT", "RT"):
+                    key = trigger_name.lower()
+                    idx = self._axis_layout.get(key) if self._axis_layout else None
+                    if idx is not None and idx < num_axes:
+                        raw = self.joystick.get_axis(idx)
+                        # 如果有基准值，做零点偏移校准
+                        baseline = self._trigger_baseline.get(key, -1.0)
+                        if baseline > 0.5:
+                            # 基准值在正半轴（如SDL布局，静止=-1），标准化: (raw - baseline) 归零
+                            # 正常情况基准约 -1.0，按下去趋向 +1.0
+                            pass
+                        # 标准化: 将 -1~+1 映射为 0~1
+                        normalized = (raw + 1) / 2
+                        # 扣除基准偏移（防止静止时漂移触发）
+                        baseline_norm = (baseline + 1) / 2
+                        effective = max(0, normalized - baseline_norm)
+                        # 保留小量余量防止误触
+                        states[trigger_name] = effective > 0.08
+                    else:
+                        states[trigger_name] = False
             except Exception as e:
                 print(f"扳机键检测异常: {e}")
                 states["LT"] = False
                 states["RT"] = False
-            
-            # 调试输出 - 只在有按键按下时输出
+
             pressed_buttons = [name for name, pressed in states.items() if pressed]
             if pressed_buttons:
                 print(f"检测到按键: {pressed_buttons}")
-            
+
             return states
         except Exception as e:
             print(f"获取按键状态失败: {e}")
             self.is_connected = False
             return {}
-    
+
     def get_joystick_axes(self) -> Dict[str, tuple]:
         """获取摇杆轴状态"""
         if not self.is_connected or not self.joystick:
             return {}
-        
+
         try:
             pygame.event.pump()
-            
-            # 检查摇杆是否仍然有效
+
             if not self.joystick.get_init():
                 self.is_connected = False
                 return {}
-            
-            # 获取摇杆轴值
-            left_x = self.joystick.get_axis(0)   # 左摇杆X轴
-            left_y = self.joystick.get_axis(1)   # 左摇杆Y轴
-            right_x = self.joystick.get_axis(3)  # 右摇杆X轴
-            right_y = self.joystick.get_axis(4)  # 右摇杆Y轴
-            
+
+            num_axes = self.joystick.get_numaxes()
+            layout = self._axis_layout or {}
+
+            def safe_axis(key):
+                idx = layout.get(key)
+                if idx is not None and idx < num_axes:
+                    return self.joystick.get_axis(idx)
+                return 0.0
+
+            left_x = safe_axis("left_x")
+            left_y = safe_axis("left_y")
+            right_x = safe_axis("right_x")
+            right_y = safe_axis("right_y")
+
             return {
                 "left": (left_x, left_y),
                 "right": (right_x, right_y)
@@ -550,7 +575,7 @@ class ControllerHandler:
             print(f"获取摇杆状态失败: {e}")
             self.is_connected = False
             return {}
-    
+
     def reconnect(self) -> bool:
         """重新连接手柄"""
         self.is_connected = False
@@ -570,7 +595,7 @@ class XboxControllerMapperGUI:
         
         # 创建GPad风格的state字典
         self.state = {'alive': True, 'sleep': False}
-        # self.mouse_motion = MouseMotion(self.state)  # GPad版本的鼠标移动控制器 - 已禁用
+        self.mouse_motion = MouseMotion(self.state)
         
         # 应用样式
         self.style_manager.apply_modern_theme()
@@ -810,35 +835,29 @@ class XboxControllerMapperGUI:
         
         # 摇杆配置选项
         joystick_options_frame = ttk.Frame(joystick_container, style='Card.TFrame')
-        joystick_options_frame.pack(fill='x', padx=10, pady=10)  # 减少内边距
-        
-        # 启用摇杆映射复选框 - 已禁用
-        # enable_checkbox = ttk.Checkbutton(joystick_options_frame,
-        #                                  text="启用摇杆映射为鼠标",
-        #                                  variable=self.joystick_mouse_enabled)
-        # enable_checkbox.pack(anchor='w', pady=(0, 12))
-        
-        # 添加禁用提示
-        disabled_label = ttk.Label(joystick_options_frame,
-                                  text="摇杆映射鼠标功能已禁用",
-                                  style='Secondary.TLabel')
-        disabled_label.pack(anchor='w', pady=(0, 12))
-        
-        # 摇杆选择 - 已禁用
-        # joystick_select_frame = ttk.Frame(joystick_options_frame, style='Card.TFrame')
-        # joystick_select_frame.pack(fill='x')
-        # 
-        # ttk.Label(joystick_select_frame, 
-        #          text="选择摇杆：", 
-        #          style='Primary.TLabel').pack(anchor='w', pady=(0, 5))
-        # 
-        # joystick_combo = ttk.Combobox(joystick_select_frame,
-        #                              textvariable=self.joystick_selection,
-        #                              values=["左摇杆", "右摇杆"],
-        #                              style='Modern.TCombobox',
-        #                              state='readonly',
-        #                              width=15)
-        # joystick_combo.pack(anchor='w')
+        joystick_options_frame.pack(fill='x', padx=10, pady=10)
+
+        # 启用摇杆映射复选框
+        enable_checkbox = ttk.Checkbutton(joystick_options_frame,
+                                         text="启用摇杆映射为鼠标",
+                                         variable=self.joystick_mouse_enabled)
+        enable_checkbox.pack(anchor='w', pady=(0, 12))
+
+        # 摇杆选择
+        joystick_select_frame = ttk.Frame(joystick_options_frame, style='Card.TFrame')
+        joystick_select_frame.pack(fill='x')
+
+        ttk.Label(joystick_select_frame,
+                 text="选择摇杆：",
+                 style='Primary.TLabel').pack(anchor='w', pady=(0, 5))
+
+        joystick_combo = ttk.Combobox(joystick_select_frame,
+                                     textvariable=self.joystick_selection,
+                                     values=["左摇杆", "右摇杆"],
+                                     style='Modern.TCombobox',
+                                     state='readonly',
+                                     width=15)
+        joystick_combo.pack(anchor='w')
     
     def create_mouse_display(self, parent, side='top'):
         """创建鼠标坐标显示和操作提示"""
@@ -1208,24 +1227,25 @@ class XboxControllerMapperGUI:
             if not self.controller.reconnect():
                 messagebox.showerror("错误", "手柄未连接，请检查手柄连接")
                 return
-        
+
         self.running = True
+
+        # 重新创建鼠标移动控制器（因为stop后线程已终止）
+        self.state = {'alive': True, 'sleep': False}
+        self.mouse_motion = MouseMotion(self.state)
+
         self.start_button.config(state='disabled')
         self.stop_button.config(state='normal')
         self.status_var.set("映射已启动")
-        
-        # 启动鼠标移动控制器 - 已禁用
-        # self.mouse_motion.start()
     
     def stop_mapping(self):
         """停止映射"""
         self.running = False
+        self.state['alive'] = False
+
         self.start_button.config(state='normal')
         self.stop_button.config(state='disabled')
         self.status_var.set("映射已停止")
-        
-        # 停止鼠标移动控制器 - 已禁用
-        # self.mouse_motion.stop()
     
     def start_main_loop(self):
         """启动主循环"""
@@ -1244,18 +1264,9 @@ class XboxControllerMapperGUI:
     
     def check_controller_input(self):
         """检查手柄输入"""
-        # 添加调试输出确认方法被调用
-        print(f"检查手柄输入 - running: {self.running}, connected: {self.controller.is_connected}")
-        
         if self.running:
             button_states = self.controller.get_button_states()
-            
-            # 调试输出按键状态
-            if button_states:
-                print(f"获取到按键状态: {button_states}")
-            else:
-                print("未获取到按键状态或按键状态为空")
-            
+
             if not button_states and self.controller.is_connected:
                 # 手柄可能断开连接
                 self.controller.is_connected = False
@@ -1266,63 +1277,43 @@ class XboxControllerMapperGUI:
             for button_name, pressed in button_states.items():
                 # 获取上一次的按键状态
                 last_pressed = self.last_button_states.get(button_name, False)
-                
+
                 # 只在按键从未按下变为按下时触发动作（防抖动）
                 if pressed and not last_pressed:
-                    print(f"按键触发: {button_name}")  # 调试输出
+                    print(f"按键触发: {button_name}")
                     self.execute_action(button_name)
-                
+
                 # 更新按键状态
                 self.last_button_states[button_name] = pressed
-            
-            # 处理摇杆映射鼠标 - 已禁用
-            # if self.joystick_mouse_enabled.get():
-            #     self.handle_joystick_mouse()
+
+            # 处理摇杆映射鼠标
+            if self.joystick_mouse_enabled.get():
+                self.handle_joystick_mouse()
         else:
-            # 调试输出：映射未启动
-            print("映射未启动，跳过按键检查")
             pass
         
         self.master.after(50, self.check_controller_input)
     
     def execute_action(self, button_name):
         """执行按键动作"""
-        print(f"执行动作 - 按键: {button_name}")  # 调试输出
-        
         if button_name not in self.button_mappings:
-            print(f"按键 {button_name} 未在映射配置中找到")  # 调试输出
             return
-        
+
         mapping = self.button_mappings[button_name]
         action_type = mapping["action_type"]
-        
-        print(f"动作类型: {action_type}")  # 调试输出
-        print(f"映射配置: {mapping}")  # 调试输出
-        
+
         try:
             if action_type == "鼠标点击":
                 if mapping["mouse_x"] and mapping["mouse_y"]:
                     x, y = int(mapping["mouse_x"]), int(mapping["mouse_y"])
-                    print(f"执行鼠标点击: ({x}, {y})")  # 调试输出
                     pyautogui.click(x, y)
                     self.status_var.set(f"执行鼠标点击: ({x}, {y})")
-                else:
-                    print(f"鼠标坐标为空: x={mapping['mouse_x']}, y={mapping['mouse_y']}")  # 调试输出
-            
+
             elif action_type == "键盘按键":
                 if mapping["keyboard_key"]:
-                    print(f"执行键盘按键: {mapping['keyboard_key']}")  # 调试输出
                     pyautogui.press(mapping["keyboard_key"])
                     self.status_var.set(f"执行按键: {mapping['keyboard_key']}")
-                else:
-                    print(f"键盘按键为空: {mapping['keyboard_key']}")  # 调试输出
-            
-            elif action_type == "无动作":
-                print(f"按键 {button_name} 设置为无动作")  # 调试输出
-            
-            else:
-                print(f"未知动作类型: {action_type}")  # 调试输出
-        
+
         except Exception as e:
             print(f"执行动作失败: {e}")
             self.status_var.set(f"动作执行失败: {button_name}")
@@ -1404,8 +1395,8 @@ class XboxControllerMapperGUI:
     def on_closing(self):
         """窗口关闭事件"""
         self.running = False
-        # 停止鼠标移动控制器 - 已禁用
-        # self.mouse_motion.stop()
+        self.state['alive'] = False
+        self.mouse_motion.stop()
         self.master.destroy()
 
 def main():

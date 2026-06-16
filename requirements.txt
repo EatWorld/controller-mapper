@@ -1,3 +1,5 @@
 pygame>=2.0.0
 pyautogui>=0.9.50
-tkinter
+mouse>=0.7.0
+pywin32>=306
+pyinstaller>=6.0
